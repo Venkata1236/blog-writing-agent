@@ -11,8 +11,8 @@ from utils.human_review import should_revise
 
 def build_research_graph():
     """
-    Graph 1 — runs research → draft → review
-    Stops after review. Human reviews in Streamlit.
+    Graph 1 — runs research → draft → review only
+    Stops at END after review. Human reviews in Streamlit.
     """
     graph = StateGraph(BlogState)
 
@@ -24,12 +24,13 @@ def build_research_graph():
     graph.add_edge("research", "draft")
     graph.add_edge("draft", "review")
 
+    # Always end after review — human decides next step
     graph.add_conditional_edges(
         "review",
         should_revise,
         {
             "draft": "draft",
-            "human_review": END      # stop here for human review
+            "human_review": END
         }
     )
 
