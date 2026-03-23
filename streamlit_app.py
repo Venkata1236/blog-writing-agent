@@ -88,14 +88,12 @@ with st.sidebar:
 def run_until_interrupt(initial_state=None, resume_state=None):
     graph = st.session_state.graph
     config = st.session_state.thread_config
-    final_state = None
+    input_state = initial_state if initial_state else resume_state
 
     try:
-        input_state = initial_state if initial_state else resume_state
-        for step in graph.stream(input_state, config=config):
-            node_name = list(step.keys())[0]
-            final_state = step[node_name]
-        return final_state
+        # Use invoke instead of stream
+        result = graph.invoke(input_state, config=config)
+        return result
     except Exception as e:
         st.error(f"❌ Agent error: {str(e)}")
         return None
@@ -171,13 +169,16 @@ elif st.session_state.stage in ["researching", "drafting", "reviewing"]:
             config = st.session_state.thread_config
             final_state = None
 
-            for step in graph.stream(initial_state, config=config):
-                node_name = list(step.keys())[0]
-                final_state = step[node_name]
+            final_state = run_until_interrupt(initial_state=initial_state)
 
             if final_state:
                 st.session_state.current_state = final_state
-                st.session_state.stage = "human_review"
+                # Check if needs human review or already published
+                if final_state.get("final_blog"):
+                    st.session_state.stage = "done"
+                    st.session_state.final_blog = final_state.get("final_blog")
+                else:
+                    st.session_state.stage = "human_review"
                 st.rerun()
             else:
                 st.error("❌ Agent failed to produce output. Please try again.")

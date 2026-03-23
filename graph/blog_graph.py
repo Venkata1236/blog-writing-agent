@@ -1,4 +1,5 @@
 import os
+from langgraph import graph
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 from graph.state import BlogState
@@ -30,8 +31,7 @@ def build_graph(mode: str = "streamlit"):
 
     # Human review node — only needed in streamlit mode
     # In CLI mode, human review is handled manually in app.py
-    if mode == "streamlit":
-        graph.add_node("human_review", _human_review_placeholder)
+    
 
     # ─────────────────────────────────────────
     # SET ENTRY POINT
@@ -51,41 +51,16 @@ def build_graph(mode: str = "streamlit"):
     # review → conditional:
     #   needs_revision = True  → back to draft
     #   needs_revision = False → human_review (streamlit) or publish (cli)
-    if mode == "streamlit":
-        graph.add_conditional_edges(
-            "review",
-            should_revise,
-            {
-                "draft": "draft",
-                "human_review": "human_review"
-            }
-        )
-
-        # human_review → conditional:
-        #   approved    → publish
-        #   not approved → draft (revision)
-        #   quit        → END
-        graph.add_conditional_edges(
-            "human_review",
-            should_publish,
-            {
-                "publish": "publish",
-                "draft": "draft",
-                "end": END
-            }
-        )
-
-    else:
-        # CLI mode — skip human_review node
-        # human review handled in app.py loop
-        graph.add_conditional_edges(
-            "review",
-            should_revise,
-            {
-                "draft": "draft",
-                "human_review": "publish"     # goes straight to publish in CLI
-            }
-        )
+    # Both modes — after review go straight to publish
+    # Human review handled in Streamlit UI via session state
+    graph.add_conditional_edges(
+        "review",
+        should_revise,
+        {
+            "draft": "draft",
+            "human_review": "publish"
+        }
+    )
 
     # publish → END (always)
     graph.add_edge("publish", END)
@@ -95,17 +70,10 @@ def build_graph(mode: str = "streamlit"):
     # ─────────────────────────────────────────
     memory = MemorySaver()
 
-    if mode == "streamlit":
-        # interrupt_before pauses graph at human_review node
-        # Graph state is saved — resumes when user clicks approve/revise
-        compiled = graph.compile(
-            checkpointer=memory,
-            interrupt_before=["human_review"]
-        )
-    else:
-        compiled = graph.compile(
-            checkpointer=memory
-        )
+    # Remove interrupt_before — human review handled via session state in Streamlit
+    compiled = graph.compile(
+    checkpointer=memory
+)
 
     return compiled
 
