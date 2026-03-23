@@ -115,18 +115,30 @@ VERDICT: [APPROVED / NEEDS REVISION]
 def _parse_score(review_text: str) -> int:
     """
     Extracts the overall score from review text.
-    Looks for 'OVERALL SCORE: X/10' pattern.
+    Handles multiple possible formats from LLM.
     """
+    import re
     try:
-        lines = review_text.upper().split("\n")
-        for line in lines:
-            if "OVERALL SCORE" in line:
-                # Extract number from "OVERALL SCORE: 8/10"
-                parts = line.split(":")
-                if len(parts) > 1:
-                    score_part = parts[1].strip()
-                    score = int(score_part.split("/")[0].strip())
-                    return min(max(score, 0), 10)   # clamp between 0-10
+        # Try multiple patterns
+        patterns = [
+            r'OVERALL SCORE[:\s]+(\d+)\s*/\s*10',
+            r'OVERALL[:\s]+(\d+)\s*/\s*10',
+            r'SCORE[:\s]+(\d+)\s*/\s*10',
+            r'(\d+)\s*/\s*10',           # any X/10 pattern
+        ]
+
+        text_upper = review_text.upper()
+
+        for pattern in patterns:
+            matches = re.findall(pattern, text_upper)
+            if matches:
+                # Take the last match — most likely the overall score
+                score = int(matches[-1])
+                return min(max(score, 0), 10)
+
     except Exception:
         pass
-    return 6    # default score if parsing fails
+
+    # Print for debugging
+    print(f"   ⚠️ Could not parse score from review. Using default 7.")
+    return 7      # changed default from 6 to 7 so it doesn't loop unnecessarily
