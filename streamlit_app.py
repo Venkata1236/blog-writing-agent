@@ -1,8 +1,10 @@
 import streamlit as st
 import os
 from dotenv import load_dotenv
-from graph.blog_graph import build_graph, get_thread_config
+from graph.blog_graph import build_research_graph, build_publish_graph, build_revision_graph, get_thread_config
 from graph.state import BlogState
+
+load_dotenv()
 
 load_dotenv()
 
@@ -21,8 +23,12 @@ st.set_page_config(
 # SESSION STATE INIT
 # ─────────────────────────────────────────
 def initialize_session():
-    if "graph" not in st.session_state:
-        st.session_state.graph = None
+    if "research_graph" not in st.session_state:
+        st.session_state.research_graph = None
+    if "publish_graph" not in st.session_state:
+        st.session_state.publish_graph = None
+    if "revision_graph" not in st.session_state:
+        st.session_state.revision_graph = None
     if "thread_config" not in st.session_state:
         st.session_state.thread_config = None
     if "current_state" not in st.session_state:
@@ -85,14 +91,11 @@ with st.sidebar:
 # ─────────────────────────────────────────
 # HELPER — RUN GRAPH UNTIL INTERRUPT
 # ─────────────────────────────────────────
-def run_until_interrupt(initial_state=None, resume_state=None):
-    graph = st.session_state.graph
+def run_graph(graph, state):
     config = st.session_state.thread_config
-    input_state = initial_state if initial_state else resume_state
-
+    final_state = None
     try:
-        # Use invoke instead of stream
-        result = graph.invoke(input_state, config=config)
+        result = graph.invoke(state, config=config)
         return result
     except Exception as e:
         st.error(f"❌ Agent error: {str(e)}")
@@ -129,11 +132,10 @@ if st.session_state.stage == "input":
     if start and topic.strip():
         st.session_state.topic = topic.strip()
         st.session_state.stage = "researching"
-
-        # Build graph
-        st.session_state.graph = build_graph(mode="streamlit")
-        st.session_state.thread_config = get_thread_config("streamlit_session_1")
-
+        st.session_state.research_graph = build_research_graph()
+        st.session_state.publish_graph = build_publish_graph()
+        st.session_state.revision_graph = build_revision_graph()
+        st.session_state.thread_config = get_thread_config("session_1")
         st.rerun()
 
 
@@ -145,8 +147,7 @@ elif st.session_state.stage in ["researching", "drafting", "reviewing"]:
     st.title("✍️ Blog Writing Agent")
     st.markdown(f"**Topic:** {st.session_state.topic}")
     st.markdown("---")
-
-    st.info("⏳ Agent is working through all stages — this may take 30-60 seconds...")
+    st.info("⏳ Agent is working — Research → Draft → Review. This may take 30-60 seconds...")
 
     with st.spinner("🔍 Researching → ✍️ Drafting → 🔎 Reviewing..."):
         initial_state: BlogState = {
@@ -164,27 +165,17 @@ elif st.session_state.stage in ["researching", "drafting", "reviewing"]:
             "error": None
         }
 
-        try:
-            graph = st.session_state.graph
-            config = st.session_state.thread_config
-            final_state = None
+        final_state = run_graph(
+            st.session_state.research_graph,
+            initial_state
+        )
 
-            final_state = run_until_interrupt(initial_state=initial_state)
-
-            if final_state:
-                st.session_state.current_state = final_state
-                # Check if needs human review or already published
-                if final_state.get("final_blog"):
-                    st.session_state.stage = "done"
-                    st.session_state.final_blog = final_state.get("final_blog")
-                else:
-                    st.session_state.stage = "human_review"
-                st.rerun()
-            else:
-                st.error("❌ Agent failed to produce output. Please try again.")
-
-        except Exception as e:
-            st.error(f"❌ Agent error: {str(e)}")
+    if final_state:
+        st.session_state.current_state = final_state
+        st.session_state.stage = "human_review"
+        st.rerun()
+    else:
+        st.error("❌ Agent failed. Please try again.")
 
 
 # ─────────────────────────────────────────
@@ -287,19 +278,18 @@ elif st.session_state.stage == "revision_input":
             "human_feedback": feedback.strip(),
             "needs_revision": True
         }
-        st.session_state.current_state = updated_state
         st.session_state.stage = "drafting"
 
         with st.spinner("🔄 Revising your blog..."):
-            final_state = run_until_interrupt(
-                resume_state=updated_state
+            final_state = run_graph(
+                st.session_state.revision_graph,
+                updated_state
             )
 
         if final_state:
             st.session_state.current_state = final_state
             st.session_state.stage = "human_review"
             st.rerun()
-
 
 # ─────────────────────────────────────────
 # STAGE 5 — PUBLISHING
@@ -311,8 +301,9 @@ elif st.session_state.stage == "publishing":
     st.markdown("---")
 
     with st.spinner("📢 Preparing your final blog post..."):
-        final_state = run_until_interrupt(
-            resume_state=st.session_state.current_state
+        final_state = run_graph(
+            st.session_state.publish_graph,
+            st.session_state.current_state
         )
 
     if final_state:
