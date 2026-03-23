@@ -86,30 +86,16 @@ with st.sidebar:
 # HELPER — RUN GRAPH UNTIL INTERRUPT
 # ─────────────────────────────────────────
 def run_until_interrupt(initial_state=None, resume_state=None):
-    """
-    Streams graph until it hits interrupt_before human_review
-    or reaches END.
-    Returns the final state after streaming.
-    """
     graph = st.session_state.graph
     config = st.session_state.thread_config
+    final_state = None
 
     try:
-        if initial_state:
-            # First run
-            for step in graph.stream(initial_state, config=config):
-                node_name = list(step.keys())[0]
-                st.session_state.current_state = step[node_name]
-                st.session_state.stage = node_name
-        else:
-            # Resume after interrupt
-            for step in graph.stream(resume_state, config=config):
-                node_name = list(step.keys())[0]
-                st.session_state.current_state = step[node_name]
-                st.session_state.stage = node_name
-
-        return st.session_state.current_state
-
+        input_state = initial_state if initial_state else resume_state
+        for step in graph.stream(input_state, config=config):
+            node_name = list(step.keys())[0]
+            final_state = step[node_name]
+        return final_state
     except Exception as e:
         st.error(f"❌ Agent error: {str(e)}")
         return None
@@ -162,16 +148,9 @@ elif st.session_state.stage in ["researching", "drafting", "reviewing"]:
     st.markdown(f"**Topic:** {st.session_state.topic}")
     st.markdown("---")
 
-    stage_messages = {
-        "researching": "🔍 Researching your topic...",
-        "drafting":    "✍️ Writing your blog draft...",
-        "reviewing":   "🔎 Reviewing draft quality..."
-    }
+    st.info("⏳ Agent is working through all stages — this may take 30-60 seconds...")
 
-    current_stage = st.session_state.stage
-    st.info(stage_messages.get(current_stage, "⏳ Processing..."))
-
-    with st.spinner("Agent is working..."):
+    with st.spinner("🔍 Researching → ✍️ Drafting → 🔎 Reviewing..."):
         initial_state: BlogState = {
             "topic": st.session_state.topic,
             "research_summary": None,
@@ -187,13 +166,24 @@ elif st.session_state.stage in ["researching", "drafting", "reviewing"]:
             "error": None
         }
 
-        final_state = run_until_interrupt(initial_state=initial_state)
+        try:
+            graph = st.session_state.graph
+            config = st.session_state.thread_config
+            final_state = None
 
-    if final_state:
-        # Graph paused at human_review
-        st.session_state.current_state = final_state
-        st.session_state.stage = "human_review"
-        st.rerun()
+            for step in graph.stream(initial_state, config=config):
+                node_name = list(step.keys())[0]
+                final_state = step[node_name]
+
+            if final_state:
+                st.session_state.current_state = final_state
+                st.session_state.stage = "human_review"
+                st.rerun()
+            else:
+                st.error("❌ Agent failed to produce output. Please try again.")
+
+        except Exception as e:
+            st.error(f"❌ Agent error: {str(e)}")
 
 
 # ─────────────────────────────────────────
