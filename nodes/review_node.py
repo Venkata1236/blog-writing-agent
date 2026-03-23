@@ -17,19 +17,15 @@ def get_api_key():
 def review_node(state: dict) -> dict:
     """
     Node 3 — Reviews the blog draft for quality.
-    Reads:  state["blog_draft"]
-            state["topic"]
-            state["revision_count"]
-    Writes: state["review_feedback"]
-            state["review_score"]
-            state["needs_revision"]
-            state["current_node"]
+    Makes TWO separate LLM calls:
+    1. Get detailed feedback (text)
+    2. Get score (number only — no parsing needed)
     """
     print("\n🔎 [Review Node] Reviewing blog draft...")
 
     llm = ChatOpenAI(
         model_name="gpt-4o-mini",
-        temperature=0.3,          # low temp — consistent evaluation
+        temperature=0.3,
         openai_api_key=get_api_key()
     )
 
@@ -46,37 +42,20 @@ def review_node(state: dict) -> dict:
             "current_node": "review"
         }
 
-    prompt = f"""
-You are a senior blog editor with 10+ years of experience.
-Review the following blog post and provide structured feedback.
-
-Topic: {topic}
+    # --- Call 1: Get detailed feedback ---
+    feedback_prompt = f"""
+You are a senior blog editor. Review this blog post about "{topic}".
 
 Blog Draft:
 {blog_draft}
 
-Evaluate the blog on these criteria and give a score out of 10 for each:
-
-1. TITLE (Is it compelling and SEO-friendly?)
-2. STRUCTURE (Clear intro, sections with headings, conclusion?)
-3. CONTENT QUALITY (Accurate, insightful, well-researched?)
-4. READABILITY (Engaging tone, clear language, good flow?)
-5. PRACTICAL VALUE (Does it give the reader useful takeaways?)
-
-Respond in EXACTLY this format:
-
-TITLE SCORE: [X/10]
-STRUCTURE SCORE: [X/10]
-CONTENT SCORE: [X/10]
-READABILITY SCORE: [X/10]
-VALUE SCORE: [X/10]
-OVERALL SCORE: [X/10]
+Provide structured feedback:
 
 STRENGTHS:
 [List 2-3 specific things done well]
 
 ISSUES:
-[List specific problems that need fixing]
+[List specific problems]
 
 IMPROVEMENT SUGGESTIONS:
 [Concrete actionable suggestions]
@@ -84,61 +63,50 @@ IMPROVEMENT SUGGESTIONS:
 VERDICT: [APPROVED / NEEDS REVISION]
 """
 
-    response = llm.invoke([HumanMessage(content=prompt)])
-    review_text = response.content
+    feedback_response = llm.invoke([HumanMessage(content=feedback_prompt)])
+    review_feedback = feedback_response.content
 
-    # --- Parse overall score ---
-    overall_score = _parse_score(review_text)
+    # --- Call 2: Get score as a number ONLY ---
+    score_prompt = f"""
+You are a blog editor. Rate this blog post about "{topic}" on a scale of 1 to 10.
 
-    # --- Determine if revision needed ---
-    # Auto approve if score >= 7 OR max revisions reached
+Blog Draft:
+{blog_draft}
+
+Respond with ONLY a single integer number between 1 and 10.
+No explanation. No text. Just the number.
+Example: 8
+"""
+
+    score_response = llm.invoke([HumanMessage(content=score_prompt)])
+    score_text = score_response.content.strip()
+
+    # Parse score — should be just a number now
+    try:
+        overall_score = int(score_text.split()[0])
+        overall_score = min(max(overall_score, 0), 10)
+    except Exception:
+        print(f"   ⚠️ Score parsing failed on '{score_text}' — defaulting to 7")
+        overall_score = 7
+
+    print(f"   📊 Score: {overall_score}/10")
+
+    # --- Decide if revision needed ---
     max_revisions = 3
     if revision_count >= max_revisions:
         needs_revision = False
-        print(f"   Max revisions ({max_revisions}) reached — forcing approval")
+        print(f"   Max revisions reached — forcing human review")
     elif overall_score >= 7:
         needs_revision = False
-        print(f"   ✅ Score {overall_score}/10 — approved for human review")
+        print(f"   ✅ Score {overall_score}/10 — sending to human review")
     else:
         needs_revision = True
         print(f"   ⚠️  Score {overall_score}/10 — needs revision")
 
     return {
         **state,
-        "review_feedback": review_text,
+        "review_feedback": review_feedback,
         "review_score": overall_score,
         "needs_revision": needs_revision,
         "current_node": "review"
     }
-
-
-def _parse_score(review_text: str) -> int:
-    """
-    Extracts the overall score from review text.
-    Handles multiple possible formats from LLM.
-    """
-    import re
-    try:
-        # Try multiple patterns
-        patterns = [
-            r'OVERALL SCORE[:\s]+(\d+)\s*/\s*10',
-            r'OVERALL[:\s]+(\d+)\s*/\s*10',
-            r'SCORE[:\s]+(\d+)\s*/\s*10',
-            r'(\d+)\s*/\s*10',           # any X/10 pattern
-        ]
-
-        text_upper = review_text.upper()
-
-        for pattern in patterns:
-            matches = re.findall(pattern, text_upper)
-            if matches:
-                # Take the last match — most likely the overall score
-                score = int(matches[-1])
-                return min(max(score, 0), 10)
-
-    except Exception:
-        pass
-
-    # Print for debugging
-    print(f"   ⚠️ Could not parse score from review. Using default 7.")
-    return 7      # changed default from 6 to 7 so it doesn't loop unnecessarily
